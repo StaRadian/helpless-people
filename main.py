@@ -28,7 +28,7 @@ def generate_unique_filename(url):
 class URLUserStorage():
     def __init__(self):
         self.data = []
-        self.isRotate = False
+        self.isRotate = "noRotate"
         
     def add_entry(self, title, url, user):
         self.data.append({"title": title, "url": url, "user": user})
@@ -49,10 +49,10 @@ class URLUserStorage():
         self.data = []
 
     def move_elements(self):
-        if self.data:
+        if self.data and not self.isRotate == "RepeatOne":
             element = self.data.pop(0)
 
-            if self.isRotate == True:
+            if self.isRotate == "Rotate":
                 self.data.append(element)
 
     def shuffle(self):
@@ -293,7 +293,10 @@ class NowPlayManager(discord.ui.View):
             next_data = self.playStorage.get_next_data()
             print(
                 f"[요청자]: {current_data["user"]}\n[다음곡]: {next_data["title"]}\n[url]: {current_data["url"]}")
-            await self.message.edit(
+            
+            await self.message.delete()
+
+            self.message = await self.ctx.send(
                 f"[요청자]: {current_data["user"]}\n[다음곡]: {next_data["title"]}\n[url]: {current_data["url"]}", view=self)
 
             # FFmpeg 소스 생성
@@ -347,9 +350,9 @@ class NowPlayManager(discord.ui.View):
 
             current_data = self.playStorage.get_current_data()
             next_data = self.playStorage.get_next_data()
-            await self.message.edit(
-                content=f"[요청자]: {current_data["user"]}\n[다음곡]: {next_data["title"]}\n[url]: {current_data["url"]}", view=self)
-            
+            await self.message.delete()
+            self.message = await self.ctx.send(
+                f"[요청자]: {current_data["user"]}\n[다음곡]: {next_data["title"]}\n[url]: {current_data["url"]}", view=self)
             await self.delete_emotion(ctx)
             self.isReservation = False
             
@@ -410,19 +413,23 @@ class NowPlayManager(discord.ui.View):
                 child.style = discord.ButtonStyle.secondary
                 self.isPause = False
 
-    @discord.ui.button(label="🔄 반복", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="➡️ 반복 없음", style=discord.ButtonStyle.secondary, row=0)
     async def rotate_button(self, button, interaction):
         if not self.ctx.voice_client:
             return
         
-        if self.playStorage.isRotate:
-            button.label = "🔄 반복"
-            button.style=discord.ButtonStyle.secondary
-            self.playStorage.isRotate = False
-        else:
-            button.label = "🔄 반복"
+        if self.playStorage.isRotate == "RepeatOne":
+            button.label = "🔁 전체 반복"
             button.style=discord.ButtonStyle.success
-            self.playStorage.isRotate = True
+            self.playStorage.isRotate = "Rotate"
+        elif self.playStorage.isRotate == "Rotate":
+            button.label = "➡️ 반복 없음"
+            button.style=discord.ButtonStyle.secondary
+            self.playStorage.isRotate = "noRotate"
+        else:
+            button.label = "🔄 한곡 반복"
+            button.style=discord.ButtonStyle.primary
+            self.playStorage.isRotate = "RepeatOne"
 
         await interaction.response.edit_message(view=self)
 
@@ -466,15 +473,12 @@ class NowPlayManager(discord.ui.View):
     async def next_button(self, button, interaction):
         if not self.ctx.voice_client:
             return
-        
-        button.disabled = True
-        await interaction.response.edit_message(view=self)
 
-        if len(self.playStorage.get_all_entries()) <= 1:
+        if len(self.playStorage.get_all_entries()) <= 1 and self.playStorage.isRotate == "noRotate":
             button.disabled = True
             button.style = discord.ButtonStyle.danger
             button.label = "다음곡X"
-            await interaction.edit_original_response(view=self)
+            await interaction.response.edit_message(view=self)
             await asyncio.sleep(1)
 
             button.disabled = False
@@ -483,14 +487,14 @@ class NowPlayManager(discord.ui.View):
             await interaction.edit_original_response(view=self)
             return
 
+        await interaction.response.edit_message(view=self)
+        
         self.isNext = True
         self.ctx.voice_client.stop()
         self.playStorage.move_elements()
         await self.next_play()
         self.isNext = False
-
-        button.disabled = False
-        await interaction.edit_original_response(view=self)
+        
 
     # @discord.ui.select(
     #     placeholder="배속: 보통",
@@ -607,14 +611,15 @@ async def list(ctx):
 async def leave(ctx):
     if ctx.voice_client:
         await nplay.show_emotion(ctx, ":smiling_face_with_tear: ", 5)
+        await ctx.voice_client.disconnect()
         if nplay:
             # if nplay.ctx.voice_client and nplay.ctx.voice_client.is_playing():
             #     nplay.ctx.voice_client.stop()
             await nplay.cancel_downloads()
             await nplay.delete_screen_file()
+            nplay.playStorage.clear_entries()
             nplay.isScreen = False
             nplay.isPlay = False
-        await ctx.voice_client.disconnect()
     else:
         await ctx.respond(f":angry:", ephemeral=True)
         await asyncio.sleep(5)
